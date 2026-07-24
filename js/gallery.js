@@ -10,6 +10,11 @@
 //     { file: "artwork-01.jpg", caption: "Optional caption" },
 //     ...
 //   ];
+//
+// Uploaded images are now stored in Supabase Storage, with
+// their public URLs saved in the "gallery" table (columns:
+// id, category, image_url, caption, created_at). Make sure
+// supabase-config.js is loaded before this file.
 // ===========================================================
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -22,53 +27,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const folder = window.GALLERY_FOLDER || '';
   const baseImages = Array.isArray(window.GALLERY_IMAGES) ? window.GALLERY_IMAGES : [];
   const categoryKey = (folder || 'gallery').replace(/\/+$/, '').split('/').pop() || 'gallery';
-  const storageKey = `portfolio-uploads-${categoryKey}`;
 
-  function getLocalStoredUploads() {
-    try {
-      const raw = localStorage.getItem(storageKey);
-      return raw ? JSON.parse(raw) : [];
-    } catch (error) {
-      return [];
-    }
-  }
-
-  function saveLocalStoredUploads(items) {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(items));
-    } catch (error) {
-      console.warn('Unable to save uploads locally:', error);
-    }
-  }
-
-  async function getStoredUploads() {
-    const localItems = getLocalStoredUploads();
-    try {
-      const response = await fetch(`/api/gallery/${categoryKey}`);
-      if (!response.ok) return localItems;
-      const data = await response.json();
-      const serverItems = Array.isArray(data.items) ? data.items : [];
-      if (serverItems.length) {
-        saveLocalStoredUploads(serverItems);
-        return serverItems;
-      }
-      return localItems;
-    } catch (error) {
-      return localItems;
-    }
-  }
-
-  async function saveStoredUploads(items) {
-    saveLocalStoredUploads(items);
-    try {
-      await fetch(`/api/gallery/${categoryKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items })
-      });
-    } catch (error) {
-      console.warn('Unable to save uploads to the server yet:', error);
-    }
+  function getSupabaseClient() {
+    if (typeof window !== 'undefined' && window.supabaseClient) return window.supabaseClient;
+    if (typeof window !== 'undefined' && window.supabase) return window.supabase;
+    return typeof supabase !== 'undefined' ? supabase : null;
   }
 
   function readFileAsDataUrl(file) {
@@ -78,6 +41,88 @@ document.addEventListener('DOMContentLoaded', () => {
       reader.onerror = () => reject(new Error('Unable to read the selected image.'));
       reader.readAsDataURL(file);
     });
+  }
+
+  function getLocalStoredUploads() {
+    try {
+      const raw = localStorage.getItem(`portfolio-uploads-${categoryKey}`);
+      return raw ? JSON.parse(raw) : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function saveLocalStoredUploads(items) {
+    try {
+      localStorage.setItem(`portfolio-uploads-${categoryKey}`, JSON.stringify(items));
+    } catch (error) {
+      console.warn('Unable to save uploads locally:', error);
+    }
+  }
+
+  function isSupabaseConfigured() {
+    const client = getSupabaseClient();
+    return Boolean(
+      client &&
+      typeof SUPABASE_BUCKET === 'string' &&
+      SUPABASE_BUCKET &&
+      typeof SUPABASE_URL === 'string' &&
+      !SUPABASE_URL.includes('YOUR_') &&
+      typeof SUPABASE_ANON_KEY === 'string' &&
+      !SUPABASE_ANON_KEY.includes('YOUR_')
+    );
+  }
+
+  async function getStoredUploads() {
+    const localItems = getLocalStoredUploads();
+    if (!isSupabaseConfigured()) return localItems;
+
+    const client = getSupabaseClient();
+    try {
+      const { data, error } = await client
+        .from('gallery')
+        .select('*')
+        .eq('category', categoryKey)
+        .order('created_at', { ascending: false });
+
+      if (error) return localItems;
+      if (!Array.isArray(data) || !data.length) return localItems;
+
+      const remoteItems = data.map(item => ({
+        name: item.image_url.split('/').pop(),
+        objectUrl: item.image_url,
+        caption: item.caption || '',
+        id: item.id
+      }));
+
+      saveLocalStoredUploads(remoteItems);
+      return remoteItems;
+    } catch (error) {
+      return localItems;
+    }
+  }
+
+  async function saveStoredUploads(items) {
+    saveLocalStoredUploads(items);
+    if (!isSupabaseConfigured()) return;
+
+    const client = getSupabaseClient();
+    try {
+      const rows = items
+        .filter(item => item.objectUrl || item.dataUrl)
+        .map(item => ({
+          category: categoryKey,
+          image_url: item.objectUrl || item.dataUrl || '',
+          caption: item.caption || ''
+        }));
+
+      await client.from('gallery').delete().eq('category', categoryKey);
+      if (rows.length) {
+        await client.from('gallery').insert(rows);
+      }
+    } catch (error) {
+      console.warn('Unable to sync uploads to Supabase:', error);
+    }
   }
 
   let uploadedItems = [];
@@ -141,14 +186,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const files = Array.from(event.target.files || []);
         if (!files.length) return;
 
-        const nextUploads = [...uploadedItems];
         let addedCount = 0;
 
+        const nextUploads = [...uploadedItems];
         for (const file of files) {
           if (!file.type.startsWith('image/')) continue;
           try {
             const dataUrl = await readFileAsDataUrl(file);
             nextUploads.push({
+              id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
               name: file.name,
               dataUrl,
               caption: file.name.replace(/\.[^.]+$/, '')
@@ -197,14 +243,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (password === 'sumedh' || password === 'Sumedh') {
           const confirmDelete = confirm(`Delete ${selectedIds.size} selected image(s)? This cannot be undone.`);
           if (!confirmDelete) return;
-          // Remove only selected uploaded items
-          uploadedItems = uploadedItems.filter(u => {
-            const id = u.dataUrl || u.objectUrl || u.name;
-            if (selectedIds.has(id)) {
-              return false;
-            }
-            return true;
+
+          uploadedItems = uploadedItems.filter(item => {
+            const itemId = item.id || item.objectUrl || item.name;
+            return !selectedIds.has(itemId);
           });
+
           await saveStoredUploads(uploadedItems);
           selectedIds.clear();
           selectionMode = false;
@@ -246,7 +290,7 @@ document.addEventListener('DOMContentLoaded', () => {
       card.className = 'art-card reveal';
 
       // id for selection / identifying uploaded items
-      const itemId = item.dataUrl || item.objectUrl || item.name || (folder + item.file);
+      const itemId = item.id || item.dataUrl || item.objectUrl || item.name || (folder + item.file);
       card.dataset.uploadId = itemId;
 
       const img = document.createElement('img');
@@ -263,7 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // If this item is an uploaded image (has an objectUrl), add selection UI and a delete button
-      if (item.dataUrl || item.objectUrl) {
+      if (item.objectUrl || item.dataUrl) {
         const sel = document.createElement('input');
         sel.type = 'checkbox';
         sel.className = 'select-checkbox';
@@ -287,13 +331,12 @@ document.addEventListener('DOMContentLoaded', () => {
           e.stopPropagation();
           const password = prompt('Enter password to delete this image:');
           if (password === 'sumedh' || password === 'Sumedh') {
-            // Remove this uploaded item from storage
-            uploadedItems = uploadedItems.filter(u => {
-              const sameDataUrl = u.dataUrl && item.dataUrl && u.dataUrl === item.dataUrl;
-              const sameObjectUrl = u.objectUrl && item.objectUrl && u.objectUrl === item.objectUrl;
-              const sameName = u.name && item.name && u.name === item.name;
-              return !sameDataUrl && !sameObjectUrl && !sameName;
+            uploadedItems = uploadedItems.filter(uploadedItem => {
+              const uploadedItemId = uploadedItem.id || uploadedItem.objectUrl || uploadedItem.name;
+              const currentItemId = item.id || item.objectUrl || item.name;
+              return uploadedItemId !== currentItemId;
             });
+
             await saveStoredUploads(uploadedItems);
             renderGallery();
           } else if (password !== null) {
