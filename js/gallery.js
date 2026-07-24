@@ -24,18 +24,42 @@ document.addEventListener('DOMContentLoaded', () => {
   const categoryKey = (folder || 'gallery').replace(/\/+$/, '').split('/').pop() || 'gallery';
   const storageKey = `portfolio-uploads-${categoryKey}`;
 
-  async function getStoredUploads() {
+  function getLocalStoredUploads() {
     try {
-      const response = await fetch(`/api/gallery/${categoryKey}`);
-      if (!response.ok) return [];
-      const data = await response.json();
-      return Array.isArray(data.items) ? data.items : [];
+      const raw = localStorage.getItem(storageKey);
+      return raw ? JSON.parse(raw) : [];
     } catch (error) {
       return [];
     }
   }
 
+  function saveLocalStoredUploads(items) {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(items));
+    } catch (error) {
+      console.warn('Unable to save uploads locally:', error);
+    }
+  }
+
+  async function getStoredUploads() {
+    const localItems = getLocalStoredUploads();
+    try {
+      const response = await fetch(`/api/gallery/${categoryKey}`);
+      if (!response.ok) return localItems;
+      const data = await response.json();
+      const serverItems = Array.isArray(data.items) ? data.items : [];
+      if (serverItems.length) {
+        saveLocalStoredUploads(serverItems);
+        return serverItems;
+      }
+      return localItems;
+    } catch (error) {
+      return localItems;
+    }
+  }
+
   async function saveStoredUploads(items) {
+    saveLocalStoredUploads(items);
     try {
       await fetch(`/api/gallery/${categoryKey}`, {
         method: 'POST',
@@ -43,7 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify({ items })
       });
     } catch (error) {
-      console.warn('Unable to save uploads to the server:', error);
+      console.warn('Unable to save uploads to the server yet:', error);
     }
   }
 
