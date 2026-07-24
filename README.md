@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Sumedh Gaikwad — Portfolio Website
 
 A 7-page HTML/CSS/JS portfolio: a homepage plus six gallery pages, one per
@@ -77,3 +78,6 @@ Netlify Drop, GitHub Pages, or Vercel — no changes to the code are needed.
 - **Name / bio**: edit the "About Me" section in `index.html`.
 - **Colors / fonts**: all defined at the top of `css/style.css` under
   `:root` — change the hex values there to re-theme the whole site.
+=======
+# Sumedh_Portfolio
+>>>>>>> 8ee9ee8e1b0eee6e4dd8a47d36314876e22be042

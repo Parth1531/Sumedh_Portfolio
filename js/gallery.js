@@ -56,6 +56,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   let uploadedItems = getStoredUploads();
+  let selectionMode = false;
+  const selectedIds = new Set();
+
+  function updateToolbarSelectionState() {
+    const delBtn = document.getElementById(`delete-selected-${categoryKey}`);
+    const countBadge = document.getElementById(`selected-count-${categoryKey}`);
+    if (delBtn) delBtn.disabled = selectedIds.size === 0;
+    if (countBadge) countBadge.textContent = selectedIds.size ? String(selectedIds.size) : '';
+  }
 
   if (toolbar && count) {
     const uploadControls = document.createElement('div');
@@ -72,6 +81,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const uploadBtn = uploadControls.querySelector(`#upload-btn-${categoryKey}`);
     const uploadInput = uploadControls.querySelector('.upload-input');
     const uploadHelp = uploadControls.querySelector('.upload-help');
+
+    // Select toggle and delete-selected button
+    const selectToggle = document.createElement('button');
+    selectToggle.className = 'select-toggle-btn';
+    selectToggle.id = `select-toggle-${categoryKey}`;
+    selectToggle.type = 'button';
+    selectToggle.title = 'Toggle select mode';
+    selectToggle.innerHTML = '<span>☑</span> Select';
+    uploadControls.appendChild(selectToggle);
+
+    const deleteSelectedBtn = document.createElement('button');
+    deleteSelectedBtn.className = 'delete-selected-btn';
+    deleteSelectedBtn.id = `delete-selected-${categoryKey}`;
+    deleteSelectedBtn.type = 'button';
+    deleteSelectedBtn.disabled = true;
+    deleteSelectedBtn.title = 'Delete selected uploaded images';
+    deleteSelectedBtn.innerHTML = '<span>🗑</span> Delete Selected <span class="selected-count" id="selected-count-' + categoryKey + '"></span>';
+    uploadControls.appendChild(deleteSelectedBtn);
+
+      // (Toolbar delete-all button removed — per-image delete remains)
 
     if (uploadBtn && uploadInput) {
       uploadBtn.addEventListener('click', () => {
@@ -116,6 +145,53 @@ document.addEventListener('DOMContentLoaded', () => {
           uploadHelp.textContent = `${addedCount} image${addedCount > 1 ? 's' : ''} added to this gallery.`;
         }
       });
+
+      // Select toggle handler
+      selectToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectionMode = !selectionMode;
+        selectToggle.classList.toggle('active', selectionMode);
+        if (!selectionMode) {
+          selectedIds.clear();
+          // clear selected visuals
+          grid.querySelectorAll('.art-card.selected').forEach(el => el.classList.remove('selected'));
+        }
+        // show/hide checkboxes on cards
+        grid.classList.toggle('select-mode', selectionMode);
+        updateToolbarSelectionState();
+      });
+
+      // Delete selected handler — removes only selected uploaded images
+      deleteSelectedBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (selectedIds.size === 0) {
+          alert('No images selected.');
+          return;
+        }
+        const password = prompt('Enter password to delete selected images:');
+        if (password === 'sumedh' || password === 'Sumedh') {
+          const confirmDelete = confirm(`Delete ${selectedIds.size} selected image(s)? This cannot be undone.`);
+          if (!confirmDelete) return;
+          // Remove only selected uploaded items
+          uploadedItems = uploadedItems.filter(u => {
+            const id = u.objectUrl || u.name;
+            if (selectedIds.has(id)) {
+              try { if (u.objectUrl && window.URL && window.URL.revokeObjectURL) window.URL.revokeObjectURL(u.objectUrl); } catch (err) {}
+              return false;
+            }
+            return true;
+          });
+          saveStoredUploads(uploadedItems);
+          selectedIds.clear();
+          selectionMode = false;
+          selectToggle.classList.remove('active');
+          grid.classList.remove('select-mode');
+          updateToolbarSelectionState();
+          renderGallery();
+        } else if (password !== null) {
+          alert('Incorrect password. Deletion cancelled.');
+        }
+      });
     }
   }
 
@@ -145,6 +221,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const card = document.createElement('div');
       card.className = 'art-card reveal';
 
+      // id for selection / identifying uploaded items
+      const itemId = item.objectUrl || item.name || (folder + item.file);
+      card.dataset.uploadId = itemId;
+
       const img = document.createElement('img');
       img.src = src;
       img.alt = caption || item.file || item.name;
@@ -158,7 +238,57 @@ document.addEventListener('DOMContentLoaded', () => {
         card.appendChild(cap);
       }
 
-      card.addEventListener('click', () => openLightbox(src, caption));
+      // If this item is an uploaded image (has an objectUrl), add selection UI and a delete button
+      if (item.objectUrl) {
+        const sel = document.createElement('input');
+        sel.type = 'checkbox';
+        sel.className = 'select-checkbox';
+        sel.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (sel.checked) selectedIds.add(itemId); else selectedIds.delete(itemId);
+          card.classList.toggle('selected', sel.checked);
+          updateToolbarSelectionState();
+        });
+        // hide checkbox unless selectionMode enabled
+        if (!selectionMode) sel.style.display = 'none';
+        card.appendChild(sel);
+
+        const del = document.createElement('button');
+        del.className = 'delete-btn';
+        del.type = 'button';
+        del.title = 'Delete image';
+        del.textContent = '✕';
+
+        del.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const password = prompt('Enter password to delete this image:');
+          if (password === 'sumedh' || password === 'Sumedh') {
+            // Remove this uploaded item from storage
+            uploadedItems = uploadedItems.filter(u => (u.objectUrl && u.objectUrl !== item.objectUrl) || (u.name && u.name !== item.name));
+            try { if (item.objectUrl && window.URL && window.URL.revokeObjectURL) window.URL.revokeObjectURL(item.objectUrl); } catch (err) {}
+            saveStoredUploads(uploadedItems);
+            renderGallery();
+          } else if (password !== null) {
+            alert('Incorrect password. Deletion cancelled.');
+          }
+        });
+
+        card.appendChild(del);
+      }
+
+      card.addEventListener('click', () => {
+        if (selectionMode) {
+          const checkbox = card.querySelector('.select-checkbox');
+          if (checkbox) {
+            checkbox.checked = !checkbox.checked;
+            if (checkbox.checked) selectedIds.add(itemId); else selectedIds.delete(itemId);
+            card.classList.toggle('selected', checkbox.checked);
+            updateToolbarSelectionState();
+          }
+          return;
+        }
+        openLightbox(src, caption);
+      });
       frag.appendChild(card);
     });
 
