@@ -24,20 +24,26 @@ document.addEventListener('DOMContentLoaded', () => {
   const categoryKey = (folder || 'gallery').replace(/\/+$/, '').split('/').pop() || 'gallery';
   const storageKey = `portfolio-uploads-${categoryKey}`;
 
-  function getStoredUploads() {
+  async function getStoredUploads() {
     try {
-      const raw = localStorage.getItem(storageKey);
-      return raw ? JSON.parse(raw) : [];
+      const response = await fetch(`/api/gallery/${categoryKey}`);
+      if (!response.ok) return [];
+      const data = await response.json();
+      return Array.isArray(data.items) ? data.items : [];
     } catch (error) {
       return [];
     }
   }
 
-  function saveStoredUploads(items) {
+  async function saveStoredUploads(items) {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(items));
+      await fetch(`/api/gallery/${categoryKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items })
+      });
     } catch (error) {
-      console.warn('Unable to save uploads locally:', error);
+      console.warn('Unable to save uploads to the server:', error);
     }
   }
 
@@ -50,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  let uploadedItems = getStoredUploads();
+  let uploadedItems = [];
   let selectionMode = false;
   const selectedIds = new Set();
 
@@ -132,7 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         uploadedItems = nextUploads;
-        saveStoredUploads(uploadedItems);
+        await saveStoredUploads(uploadedItems);
         renderGallery();
         uploadInput.value = '';
 
@@ -157,7 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       // Delete selected handler — removes only selected uploaded images
-      deleteSelectedBtn.addEventListener('click', (e) => {
+      deleteSelectedBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (selectedIds.size === 0) {
           alert('No images selected.');
@@ -175,7 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             return true;
           });
-          saveStoredUploads(uploadedItems);
+          await saveStoredUploads(uploadedItems);
           selectedIds.clear();
           selectionMode = false;
           selectToggle.classList.remove('active');
@@ -253,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
         del.title = 'Delete image';
         del.textContent = '✕';
 
-        del.addEventListener('click', (e) => {
+        del.addEventListener('click', async (e) => {
           e.stopPropagation();
           const password = prompt('Enter password to delete this image:');
           if (password === 'sumedh' || password === 'Sumedh') {
@@ -264,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
               const sameName = u.name && item.name && u.name === item.name;
               return !sameDataUrl && !sameObjectUrl && !sameName;
             });
-            saveStoredUploads(uploadedItems);
+            await saveStoredUploads(uploadedItems);
             renderGallery();
           } else if (password !== null) {
             alert('Incorrect password. Deletion cancelled.');
