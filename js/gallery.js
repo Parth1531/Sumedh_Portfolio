@@ -338,7 +338,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  renderGallery();
+  async function initGallery() {
+    uploadedItems = await getStoredUploads();
+    renderGallery();
+  }
+
+  initGallery();
 
   /* Lightbox */
   const lightbox = document.getElementById('lightbox');
