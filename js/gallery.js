@@ -41,17 +41,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function readFileAsObjectUrl(file) {
+  function readFileAsDataUrl(file) {
     return new Promise((resolve, reject) => {
-      if (!window.URL || typeof window.URL.createObjectURL !== 'function') {
-        reject(new Error('This browser does not support local image preview.'));
-        return;
-      }
-      try {
-        resolve(window.URL.createObjectURL(file));
-      } catch (error) {
-        reject(error);
-      }
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('Unable to read the selected image.'));
+      reader.readAsDataURL(file);
     });
   }
 
@@ -122,10 +117,10 @@ document.addEventListener('DOMContentLoaded', () => {
         for (const file of files) {
           if (!file.type.startsWith('image/')) continue;
           try {
-            const objectUrl = await readFileAsObjectUrl(file);
+            const dataUrl = await readFileAsDataUrl(file);
             nextUploads.push({
               name: file.name,
-              objectUrl,
+              dataUrl,
               caption: file.name.replace(/\.[^.]+$/, '')
             });
             addedCount += 1;
@@ -174,9 +169,8 @@ document.addEventListener('DOMContentLoaded', () => {
           if (!confirmDelete) return;
           // Remove only selected uploaded items
           uploadedItems = uploadedItems.filter(u => {
-            const id = u.objectUrl || u.name;
+            const id = u.dataUrl || u.objectUrl || u.name;
             if (selectedIds.has(id)) {
-              try { if (u.objectUrl && window.URL && window.URL.revokeObjectURL) window.URL.revokeObjectURL(u.objectUrl); } catch (err) {}
               return false;
             }
             return true;
@@ -215,14 +209,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const frag = document.createDocumentFragment();
 
     items.forEach((item) => {
-      const src = item.objectUrl || item.dataUrl || (folder + item.file);
+      const src = item.dataUrl || item.objectUrl || (folder + item.file);
       const caption = item.caption || item.name || '';
 
       const card = document.createElement('div');
       card.className = 'art-card reveal';
 
       // id for selection / identifying uploaded items
-      const itemId = item.objectUrl || item.name || (folder + item.file);
+      const itemId = item.dataUrl || item.objectUrl || item.name || (folder + item.file);
       card.dataset.uploadId = itemId;
 
       const img = document.createElement('img');
@@ -239,7 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // If this item is an uploaded image (has an objectUrl), add selection UI and a delete button
-      if (item.objectUrl) {
+      if (item.dataUrl || item.objectUrl) {
         const sel = document.createElement('input');
         sel.type = 'checkbox';
         sel.className = 'select-checkbox';
@@ -264,8 +258,12 @@ document.addEventListener('DOMContentLoaded', () => {
           const password = prompt('Enter password to delete this image:');
           if (password === 'sumedh' || password === 'Sumedh') {
             // Remove this uploaded item from storage
-            uploadedItems = uploadedItems.filter(u => (u.objectUrl && u.objectUrl !== item.objectUrl) || (u.name && u.name !== item.name));
-            try { if (item.objectUrl && window.URL && window.URL.revokeObjectURL) window.URL.revokeObjectURL(item.objectUrl); } catch (err) {}
+            uploadedItems = uploadedItems.filter(u => {
+              const sameDataUrl = u.dataUrl && item.dataUrl && u.dataUrl === item.dataUrl;
+              const sameObjectUrl = u.objectUrl && item.objectUrl && u.objectUrl === item.objectUrl;
+              const sameName = u.name && item.name && u.name === item.name;
+              return !sameDataUrl && !sameObjectUrl && !sameName;
+            });
             saveStoredUploads(uploadedItems);
             renderGallery();
           } else if (password !== null) {
